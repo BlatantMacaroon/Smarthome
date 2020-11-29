@@ -44,6 +44,10 @@ class Activity:
     def get_fuzzy_set(self):
         n = len(self.behaviours)
         return {key: value/n for key, value in self.sensor_count.items()}
+    def get_a_level(self, alpha):
+        n = len(self.behaviours)
+        return {key: value/n for key, value in self.sensor_count.items() if value/n >= alpha}
 
 activities= Activities('data/data_aruba')
 print(activities.data['Meal_Preparation'].get_fuzzy_set())
+print(activities.data['Meal_Preparation'].get_a_level(.8))
