@@ -1,22 +1,19 @@
 from collections import defaultdict
 from random import random
+import math
 
-def parse_data(data):
+def parse_data(data, test_proportion):
     def add_sensor(buffer, line):
         # verify behaviour is valid (related to motion or ) and then add sensor to all current behaviours
         if line[2][0] == 'M' and line[3] == 'ON':
             for key in buffer: buffer[key].add(line[2])
         if line[2][0] == 'D':
-            for key in buffer: buffer[key].add(line[2]+('O' if line[3] == 'OPEN' else 'C'))
+            for key in buffer: buffer[key].add(line[2])
     activities = defaultdict(Activity)
     test = []
-    test_proportion = 0.2
     buffer = {}
+    universe = set()
     f = open(data)
-    max_parsed = 15
-    total = 0
-    hasdoor = 0
-    doormismatch = 0
     for line in f:
         # whenever starting point is found, start adding lines to a new behaviour
         # whenever end point is found, finish that behaviour, remove it from list of behaviours being added and 
@@ -34,22 +31,14 @@ def parse_data(data):
                     print('error! Ending behaviour that has not started yet')
                 else:
                     add_sensor(buffer, line)
-                    for s in buffer[activity_name]:
-                        if s[0] == 'D' and s[:-1]+('O' if s[-1] == 'C' else 'C') not in buffer[activity_name]: doormismatch +=1
-                    if any(s[0] == 'D' for s in buffer[activity_name]): hasdoor +=1
-                    total +=1
                     if random() < test_proportion:
                         test.append(Behaviour(activity_name, buffer[activity_name]))
                     else: 
                         activities[activity_name].add(buffer[activity_name])
+                    universe = universe.union(buffer[activity_name])
                     del buffer[activity_name]
-                    # max_parsed -=1
-                    # if max_parsed == 0: break
-                    #print(len(buffer))
         else: add_sensor(buffer, line)
-    print(total, doormismatch, doormismatch/total)
-    print(hasdoor, doormismatch, doormismatch/hasdoor)
-    return activities, test
+    return activities, test, universe
 
 class Activity:
     def __init__(self):
@@ -69,9 +58,20 @@ class Behaviour:
     def __init__(self, activity_name, sensors):
         self.activity_name = activity_name
         self.sensors = sensors
+    def __str__(self):
+        return 'Behaviour(' + self.activity_name + ', ' + str(self.sensors) + ')'
 
-activities, test= parse_data('data/data_aruba')
+def fuzzy_error(behaviour, activity, universe):
+    # this will calculate how well a given Activity fits a given behaviour by returning the standardized error
+    return math.sqrt(sum(((sensor in behaviour.sensors) - (activity[sensor] if sensor in activity else 0))**2 for sensor in universe)/len(universe))
+    
+
+activities, test, universe= parse_data('data/data_aruba', 0.2)
 print(activities['Meal_Preparation'].get_fuzzy_set())
 print(len(activities['Meal_Preparation'].get_fuzzy_set()))
 print(activities['Meal_Preparation'].get_a_level(.8))
 print(len(test))
+print(len(universe))
+print(test[0])
+for act in activities:
+    print(act, fuzzy_error(test[0], activities[act].get_fuzzy_set(), universe))
