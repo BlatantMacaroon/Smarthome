@@ -70,8 +70,8 @@ def best_activity(behaviour, activities, universe):
     return sorted([(fuzzy_error(behaviour, activities[act].get_fuzzy_set(), universe), act) for act in activities])
     
 def idx_of_truth(behaviour, activities, universe):
-    #returns the index of the activity that was actually the corresponding ground truth (1 means first guess was correct, 2 means second guess, etc)
-    return  next(idx+1 for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name)
+    #returns the index of the activity that was actually the corresponding ground truth (0 means first guess was correct, 1 means second guess, etc)
+    return  next(idx for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name)
 
 def confusion_matrix(activities, test_data, universe):
     #prints a confusion matrix to the console for given results
@@ -89,6 +89,19 @@ def confusion_matrix(activities, test_data, universe):
         print(str(i)+'\t',*((str(result[truth][pred])+' '*(4-len(str(result[truth][pred]))) 
             if pred in result[truth] else '.   ') for pred in key))
 
+def nth_guess_table(activities, test_data, universe):
+    result = defaultdict(list)
+    for t in test_data:
+        truth = t.activity_name
+        idx = idx_of_truth(t, activities, universe)
+        # if idx>3: print(t, best_activity(t, activities ,universe))
+        current_len = len(result[truth])
+        if current_len <= idx:
+            result[truth].extend([0 for i in range(idx-current_len+1)])
+        result[truth][idx]+=1
+    print('\nCORRECT PREDICTION ON NTH GUESS')
+    for truth in result:
+        print(truth, result[truth])
 
 
 
@@ -107,4 +120,4 @@ print(idx_of_truth(test_data[0], activities, universe))
 # result = {t.activity_name: best_activity for t in test_data}
 
 confusion_matrix(activities, test_data, universe)
-
+nth_guess_table(activities, test_data, universe)
