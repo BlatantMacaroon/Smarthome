@@ -64,14 +64,47 @@ class Behaviour:
 def fuzzy_error(behaviour, activity, universe):
     # this will calculate how well a given Activity fits a given behaviour by returning the standardized error
     return math.sqrt(sum(((sensor in behaviour.sensors) - (activity[sensor] if sensor in activity else 0))**2 for sensor in universe)/len(universe))
-    
 
-activities, test, universe= parse_data('data/data_aruba', 0.2)
+def best_activity(behaviour, activities, universe):
+    #returns a list of activity names, from best fitting to worst fitting
+    return sorted([(fuzzy_error(behaviour, activities[act].get_fuzzy_set(), universe), act) for act in activities])
+    
+def idx_of_truth(behaviour, activities, universe):
+    #returns the index of the activity that was actually the corresponding ground truth (1 means first guess was correct, 2 means second guess, etc)
+    return  next(idx+1 for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name)
+
+def confusion_matrix(activities, test_data, universe):
+    #prints a confusion matrix to the console for given results
+    result = defaultdict(lambda: defaultdict(int))
+    for t in test_data:
+        truth = t.activity_name
+        guess = best_activity(t, activities, universe)[0][1]
+        result[truth][guess] +=1
+    key = [i for i in result]
+    print('\nKEY')
+    for index, name in enumerate(key): print(index, ': '+name)
+    print ('\nTRUTH\t\t\tPREDICTION')
+    print ('\t',*(str(i)+'   ' for i in range(len(key))))
+    for i, truth in enumerate(key):
+        print(str(i)+'\t',*((str(result[truth][pred])+' '*(4-len(str(result[truth][pred]))) 
+            if pred in result[truth] else '.   ') for pred in key))
+
+
+
+
+activities, test_data, universe= parse_data('data/data_aruba', 0.2)
 print(activities['Meal_Preparation'].get_fuzzy_set())
 print(len(activities['Meal_Preparation'].get_fuzzy_set()))
 print(activities['Meal_Preparation'].get_a_level(.8))
-print(len(test))
+print(len(test_data))
 print(len(universe))
-print(test[0])
-for act in activities:
-    print(act, fuzzy_error(test[0], activities[act].get_fuzzy_set(), universe))
+print(test_data[0])
+# for act in activities:
+#     print(act, fuzzy_error(test_data[0], activities[act].get_fuzzy_set(), universe))
+print(best_activity(test_data[0], activities, universe))
+print(idx_of_truth(test_data[0], activities, universe))
+
+# result = {t.activity_name: best_activity for t in test_data}
+
+confusion_matrix(activities, test_data, universe)
+
