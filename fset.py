@@ -2,7 +2,8 @@ from collections import defaultdict
 from random import random
 import math
 
-def parse_data(data, test_proportion):
+def parse_data(data, test_proportion, test_novel=set()):
+    #test_novel is a set of activity names to keep to one side to use as 'novel' activities
     def add_sensor(buffer, line):
         # verify behaviour is valid (related to motion or ) and then add sensor to all current behaviours
         if line[2][0] == 'M' and line[3] == 'ON':
@@ -31,7 +32,7 @@ def parse_data(data, test_proportion):
                     print('error! Ending behaviour that has not started yet')
                 else:
                     add_sensor(buffer, line)
-                    if random() < test_proportion:
+                    if random() < test_proportion or activity_name in test_novel:
                         test.append(Behaviour(activity_name, buffer[activity_name]))
                     else: 
                         activities[activity_name].add(buffer[activity_name])
@@ -71,29 +72,37 @@ def best_activity(behaviour, activities, universe):
     
 def idx_of_truth(behaviour, activities, universe):
     #returns the index of the activity that was actually the corresponding ground truth (0 means first guess was correct, 1 means second guess, etc)
-    return  next(idx for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name)
+    return  next((idx for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name), None)
 
-def confusion_matrix(activities, test_data, universe):
+def confusion_matrix(activities, test_data, universe, novelty_criterion=1):
     #prints a confusion matrix to the console for given results
     result = defaultdict(lambda: defaultdict(int))
     for t in test_data:
         truth = t.activity_name
-        guess = best_activity(t, activities, universe)[0][1]
+        guess = best_activity(t, activities, universe)[0]
+        guess = 'Novel' if guess[0]>novelty_criterion else guess[1]
         result[truth][guess] +=1
-    key = [i for i in result]
+    act_names = sorted([act for act in activities])
+    test_names = act_names+sorted([t for t in result if t not in act_names])
+    need_novel = novelty_criterion < 1 and 'Novel' not in test_names
+    key_names = test_names+(['Novel'] if need_novel else [])
+    if need_novel: act_names.append('Novel')
+    print(test_names)
+    print(act_names)
     print('\nKEY')
-    for index, name in enumerate(key): print(index, ': '+name)
+    for index, name in enumerate(key_names): print(index, ': '+name)
     print ('\nTRUTH\t\t\tPREDICTION')
-    print ('\t',*(str(i)+'   ' for i in range(len(key))))
-    for i, truth in enumerate(key):
-        print(str(i)+'\t',*((str(result[truth][pred])+' '*(4-len(str(result[truth][pred]))) 
-            if pred in result[truth] else '.   ') for pred in key))
+    print ('\t',*(str(key_names.index(act))+'   ' for act in act_names))
+    for truth in test_names:
+        print(str(key_names.index(truth))+'\t',*((str(result[truth][act])+' '*(4-len(str(result[truth][act]))) 
+            if act in result[truth] else '.   ') for act in act_names))
 
 def nth_guess_table(activities, test_data, universe):
     result = defaultdict(list)
     for t in test_data:
         truth = t.activity_name
         idx = idx_of_truth(t, activities, universe)
+        if idx == None: continue 
         # if idx>3: print(t, best_activity(t, activities ,universe))
         current_len = len(result[truth])
         if current_len <= idx:
@@ -105,7 +114,7 @@ def nth_guess_table(activities, test_data, universe):
 
 
 
-activities, test_data, universe= parse_data('data/data_aruba', 0.2)
+activities, test_data, universe= parse_data('data/data_aruba', 0.2, test_novel={'Eating'})
 print(activities['Meal_Preparation'].get_fuzzy_set())
 print(len(activities['Meal_Preparation'].get_fuzzy_set()))
 print(activities['Meal_Preparation'].get_a_level(.8))
@@ -119,5 +128,5 @@ print(idx_of_truth(test_data[0], activities, universe))
 
 # result = {t.activity_name: best_activity for t in test_data}
 
-confusion_matrix(activities, test_data, universe)
+confusion_matrix(activities, test_data, universe, novelty_criterion=.25)
 nth_guess_table(activities, test_data, universe)
