@@ -41,6 +41,7 @@ class Behaviour:
                 self.time[t] = self.finish[1]
                 inside_range = False
     def membership(self, domain, element):
+        if domain == 'x': return (element[0] in self.sensors) * self.time[element[1]]
         domain_set = getattr(self, domain)
         return (element in domain_set) * 1 if isinstance(domain_set, set) else domain_set[element]
 

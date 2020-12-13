@@ -5,7 +5,8 @@ class Activity:
         self.behaviours = []
         self.sets = {
             'sensors': defaultdict(int), 
-            'time': defaultdict(float)
+            'time': defaultdict(float),
+            'x': defaultdict(float)
         }
         # self.sensor_set = defaultdict(int)
         # self.time_set = defaultdict(float)
@@ -14,6 +15,10 @@ class Activity:
         for sensor in behaviour.sensors: self.sets['sensors'][sensor]+=1
         for key in behaviour.time:
             self.sets['time'][key] += behaviour.time[key]
+        for sensor in behaviour.sensors:
+            for time in behaviour.time:
+                self.sets['x'][(sensor, time)] += behaviour.time[time]
+
     def get_fuzzy_set(self, domain):
         n = len(self.behaviours)
         return {key: value/n for key, value in self.sets[domain].items()}

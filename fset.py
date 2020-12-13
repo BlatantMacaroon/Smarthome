@@ -52,6 +52,7 @@ def parse_data(data, test_proportion, test_novel=set()):
                         # if max_behaviours == 0: break
                         # else: max_behaviours -=1
                     universe['sensors'] = universe['sensors'].union(buffer[activity_name]['sensors'])
+                    universe['x'] = universe['x'].union({(sensor, time) for sensor in buffer[activity_name]['sensors'] for time in times})
                     del buffer[activity_name]
         else: add_sensor(buffer, line)
         universe['time'] = times
@@ -147,15 +148,19 @@ def error_rates(test_data, activities, universe, domain, novelty_criterion):
         hit_string = str(round(hit_rate(result, truth, activities), 3))
         print(truth+' '*(18-len(truth)), 
             hit_string+' '*(8-len(hit_string)),
-            round(fa_rate(result, truth if truth in activities else 'Novel', activities), 3)
+            round(fa_rate(result, truth, activities), 3) if truth in activities else '.'
         )
+    print('Novel'+' '*22, round(fa_rate(result, 'Novel', activities), 3))
 
-activities, test_data, universe= parse_data('data/data_aruba', 0.4, {'Sleeping', 'Meal_Preparation'})
+activities, test_data, universe= parse_data('data/data_aruba', 0.4, {} )
 domain = 'sensors'
-criterion = .3
+criterion = 1
 args = (test_data, activities, universe, domain, criterion)
 # print(crosstab(test_data, activities, universe, domain, 0.5))
 confusion_matrix(*args)
 nth_guess_table(*args)
 error_rates(*args)
+# print('\n',universe['x'])
+# print(len(universe['x']))
+# print(sorted(universe['x']))
 
