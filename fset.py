@@ -1,108 +1,126 @@
 from collections import defaultdict
 from random import random
 import math
+from activity import Activity
+from behaviour import Behaviour, parse_time, times
 
 def parse_data(data, test_proportion, test_novel=set()):
     #test_novel is a set of activity names to keep to one side to use as 'novel' activities
     def add_sensor(buffer, line):
         # verify behaviour is valid (related to motion or ) and then add sensor to all current behaviours
         if line[2][0] == 'M' and line[3] == 'ON':
-            for key in buffer: buffer[key].add(line[2])
+            for key in buffer: buffer[key]['sensors'].add(line[2])
         if line[2][0] == 'D':
-            for key in buffer: buffer[key].add(line[2])
+            for key in buffer: buffer[key]['sensors'].add(line[2])
     activities = defaultdict(Activity)
     test = []
     buffer = {}
-    universe = set()
+    universe = defaultdict(set)
+    max_lines = 150
+    max_behaviours = 20
     f = open(data)
     for line in f:
         # whenever starting point is found, start adding lines to a new behaviour
         # whenever end point is found, finish that behaviour, remove it from list of behaviours being added and 
         line = line.split()
+        # if max_lines>0:
+        #     max_lines-=1
+        #     # print(line, parse_time(line, 'start'), parse_time(line, 'finish'))
+        # else: break
         if len(line) > 4: # if this row is a start/end of an activity, it will have two extra values at the end
             activity_name = line[4]
+            if activity_name == 'Novel': print('error! Activity cannot be defined as Novel')
             if line[5] == 'begin':
                 if activity_name in buffer:
                     print('error! Starting behaviour that is already started')
                 else:
-                    buffer[activity_name] = set() # start building a set of triggered sensors for this observed behaviour
+                    buffer[activity_name] = {'activity_name': activity_name, 'sensors': set(), 'start': parse_time(line, 'start')} # start building kwargs to contruct this behaviour
                     add_sensor(buffer, line)
             if line[5] == 'end':
                 if activity_name not in buffer:
                     print('error! Ending behaviour that has not started yet')
                 else:
                     add_sensor(buffer, line)
+                    buffer[activity_name]['finish'] = parse_time(line, 'finish')
+                    behaviour = Behaviour(**buffer[activity_name])
                     if random() < test_proportion or activity_name in test_novel:
-                        test.append(Behaviour(activity_name, buffer[activity_name]))
+                        test.append(behaviour)
                     else: 
-                        activities[activity_name].add(buffer[activity_name])
-                    universe = universe.union(buffer[activity_name])
+                        # print('\n',activity_name)
+                        activities[activity_name].add(behaviour)
+                        # print(max_behaviours)
+                        # if max_behaviours == 0: break
+                        # else: max_behaviours -=1
+                    universe['sensors'] = universe['sensors'].union(buffer[activity_name]['sensors'])
                     del buffer[activity_name]
         else: add_sensor(buffer, line)
+        universe['time'] = times
     return activities, test, universe
 
-class Activity:
-    def __init__(self):
-        self.behaviours = []
-        self.sensor_count = defaultdict(int)
-    def add(self, behaviour):
-        self.behaviours.append(behaviour)
-        for sensor in self.behaviours[-1]: self.sensor_count[sensor]+=1
-    def get_fuzzy_set(self):
-        n = len(self.behaviours)
-        return {key: value/n for key, value in self.sensor_count.items()}
-    def get_a_level(self, alpha):
-        n = len(self.behaviours)
-        return {key: value/n for key, value in self.sensor_count.items() if value/n >= alpha}
-
-class Behaviour:
-    def __init__(self, activity_name, sensors):
-        self.activity_name = activity_name
-        self.sensors = sensors
-    def __str__(self):
-        return 'Behaviour(' + self.activity_name + ', ' + str(self.sensors) + ')'
-
-def fuzzy_error(behaviour, activity, universe):
+def fuzzy_error(behaviour, activity, universe, domain):
     # this will calculate how well a given Activity fits a given behaviour by returning the standardized error
-    return math.sqrt(sum(((sensor in behaviour.sensors) - (activity[sensor] if sensor in activity else 0))**2 for sensor in universe)/len(universe))
+    return math.sqrt(sum(((behaviour.membership(domain, element) - activity.membership(domain, element)))**2 for element in universe[domain])/len(universe[domain]))
 
-def best_activity(behaviour, activities, universe):
+def best_activity(behaviour, activities, universe, domain, novelty_criterion):
     #returns a list of activity names, from best fitting to worst fitting
-    return sorted([(fuzzy_error(behaviour, activities[act].get_fuzzy_set(), universe), act) for act in activities])
-    
-def idx_of_truth(behaviour, activities, universe):
-    #returns the index of the activity that was actually the corresponding ground truth (0 means first guess was correct, 1 means second guess, etc)
-    return  next((idx for idx, v in enumerate(best_activity(behaviour, activities, universe)) if v[1] == behaviour.activity_name), None)
+    return sorted([(fuzzy_error(behaviour, activities[act], universe, domain), act) for act in activities]+([(novelty_criterion, 'Novel')]))
 
-def confusion_matrix(activities, test_data, universe, novelty_criterion=1):
+class Crosstab:
+    # provides a crosstabulation of best guesses: the frequency with which each activity in the test data was categorized as being each activity class
+    # also provides row/col totals to speed up calculation
+    def __init__(self, test_data, activities, universe, domain, novelty_criterion):
+        self.test_data = test_data
+        self.activities = activities
+        self.universe = universe
+        self.domain = domain
+        self.novelty_criterion = novelty_criterion
+        self.xtab = defaultdict(lambda: defaultdict(int))
+        self.truths = defaultdict(int)
+        self.predictions = defaultdict(int)
+        for t in test_data:
+            truth = t.activity_name
+            guess = best_activity(t, activities, universe, domain, novelty_criterion)[0][1]
+            self.xtab[truth][guess] +=1
+            self.predictions[guess] +=1
+        for truth in self.xtab:
+            self.truths[truth] = sum(self.xtab[truth].values())
+        self.total = sum(self.truths.values())
+    def f_string(self, truth, pred):
+        s =  str(self.xtab[truth][pred])
+        return (s if truth != pred else f"\u001b[32m{s}\u001b[37m")+' '*(4-len(s))
+
+def confusion_matrix(test_data, activities, universe, domain, novelty_criterion=1):
     #prints a confusion matrix to the console for given results
-    result = defaultdict(lambda: defaultdict(int))
-    for t in test_data:
-        truth = t.activity_name
-        guess = best_activity(t, activities, universe)[0]
-        guess = 'Novel' if guess[0]>novelty_criterion else guess[1]
-        result[truth][guess] +=1
-    act_names = sorted([act for act in activities])
-    test_names = act_names+sorted([t for t in result if t not in act_names])
-    need_novel = novelty_criterion < 1 and 'Novel' not in test_names
-    key_names = test_names+(['Novel'] if need_novel else [])
-    if need_novel: act_names.append('Novel')
-    print(test_names)
-    print(act_names)
+    result = Crosstab(test_data, activities, universe, domain, novelty_criterion)
+    act_names = sorted([act for act in activities]) #categories that the algorithm can actually categorise behaviours as (but not including 'Novel')
+    test_names_in_act = sorted([t for t in result.truths if t in act_names]) #categories that were present in test cases and were also in act_names
+    test_names_not_in_act = sorted([t for t in result.truths if t not in act_names]) #categories that were present in test cases but were not also in act_names
+    test_names = test_names_in_act + test_names_not_in_act #all categories present in test cases, alphabetized but with those actually not actually present in act_names listed last
+    key_names = act_names + test_names_not_in_act + ['Novel']
+    act_names.append('Novel')
     print('\nKEY')
     for index, name in enumerate(key_names): print(index, ': '+name)
     print ('\nTRUTH\t\t\tPREDICTION')
-    print ('\t',*(str(key_names.index(act))+'   ' for act in act_names))
+    print ('\t',*(str(key_names.index(act))+'   ' for act in act_names), 'n')
     for truth in test_names:
-        print(str(key_names.index(truth))+'\t',*((str(result[truth][act])+' '*(4-len(str(result[truth][act]))) 
-            if act in result[truth] else '.   ') for act in act_names))
+        print(str(key_names.index(truth))+'\t',*((result.f_string(truth, act) 
+            if act in result.xtab[truth] else '.   ') for act in act_names), result.truths[truth])
+    print('n\t', *((str(result.predictions[act])+' '*(4-len(str(result.predictions[act]))) if act in result.predictions else '.   ') for act in act_names), result.total)
 
-def nth_guess_table(activities, test_data, universe):
+def idx_of_truth(behaviour, activities, universe, domain, novelty_criterion):
+    #returns the index of the activity that was actually the corresponding ground truth (0 means first guess was correct, 1 means second guess, etc)
+    #if activity is actually novel (ie not in the list of activities) will return the index of 'Novel'
+    target = behaviour.activity_name if behaviour.activity_name in activities else 'Novel'
+    return  next((idx for idx, v in enumerate(best_activity(behaviour, activities, universe, domain, novelty_criterion)) if v[1] == target), None)
+
+def nth_guess_table(test_data, activities, universe, domain, novelty_criterion=1):
     result = defaultdict(list)
     for t in test_data:
         truth = t.activity_name
-        idx = idx_of_truth(t, activities, universe)
-        if idx == None: continue 
+        idx = idx_of_truth(t, activities, universe, domain, novelty_criterion)
+        if idx == None: 
+            print('error: None found')
+            continue 
         # if idx>3: print(t, best_activity(t, activities ,universe))
         current_len = len(result[truth])
         if current_len <= idx:
@@ -112,21 +130,32 @@ def nth_guess_table(activities, test_data, universe):
     for truth in result:
         print(truth, result[truth])
 
+def hit_rate(crosstab, truth, activities):
+    #activity and target should normally be the same (exception would be where you expect a particular activity to be recognized as 'novel')
+    target = truth if truth in activities else 'Novel'
+    return crosstab.xtab[truth][target]/crosstab.truths[truth]
 
+def fa_rate(crosstab, target, activities):
+    #TODO: update to use totals to make calc faster
+    others = {a for a in crosstab.xtab if a in activities} if target == 'Novel' else {a for a in crosstab.xtab if a != target}
+    return sum(crosstab.xtab[a][target] for a in others)/sum(sum(crosstab.xtab[a].values()) for a in others)
 
-activities, test_data, universe= parse_data('data/data_aruba', 0.2, test_novel={'Eating'})
-print(activities['Meal_Preparation'].get_fuzzy_set())
-print(len(activities['Meal_Preparation'].get_fuzzy_set()))
-print(activities['Meal_Preparation'].get_a_level(.8))
-print(len(test_data))
-print(len(universe))
-print(test_data[0])
-# for act in activities:
-#     print(act, fuzzy_error(test_data[0], activities[act].get_fuzzy_set(), universe))
-print(best_activity(test_data[0], activities, universe))
-print(idx_of_truth(test_data[0], activities, universe))
+def error_rates(test_data, activities, universe, domain, novelty_criterion):
+    result = Crosstab(test_data, activities, universe, domain, novelty_criterion)
+    print ('\nHITS AND FALSE ALARMS')
+    for truth in result.truths:
+        hit_string = str(round(hit_rate(result, truth, activities), 3))
+        print(truth+' '*(18-len(truth)), 
+            hit_string+' '*(8-len(hit_string)),
+            round(fa_rate(result, truth if truth in activities else 'Novel', activities), 3)
+        )
 
-# result = {t.activity_name: best_activity for t in test_data}
+activities, test_data, universe= parse_data('data/data_aruba', 0.4, {'Sleeping', 'Meal_Preparation'})
+domain = 'sensors'
+criterion = .3
+args = (test_data, activities, universe, domain, criterion)
+# print(crosstab(test_data, activities, universe, domain, 0.5))
+confusion_matrix(*args)
+nth_guess_table(*args)
+error_rates(*args)
 
-confusion_matrix(activities, test_data, universe, novelty_criterion=.25)
-nth_guess_table(activities, test_data, universe)
