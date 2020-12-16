@@ -1,0 +1,21 @@
+Combining evidence from different domains
+
+I tried a few ways of combining evidence from different domains.
+First, I considered tallying up frequencies for each combination of the elements from each domain. 
+However, I decided this was unnecessarily complex (especially when using more than 1 or 2 domains). 
+Though, it does have the advantage of correctly identifying that some activities may occur in different areas at different times.
+
+I decided to use a t-norm to combine membership across multiple domains. I tried two approaches to this. First, I tried combining membership of elements to activities, and elements to observations.
+E.g. membership of ('M001', 'Night') would be membership of 'M001' * membership of 'Night' (using product t-norm). However, this had the consequence that an observation would fit equally an activity that
+had a high frequency of 'M001' and a low frequency of 'Night' as an activity with the opposite pattern. This makes no sense.
+
+Instead, I decided to combine at a higher level - calculate membership across all the elements, for each domain separately, and then use the t-norm to combine these membership grades.
+
+Assumptions:
+Knows where a behaviour stops and begins
+Perfect knowledge of previous activity is available
+
+
+Definitions:
+"previous activity" is defined as the last activity to finish before the current activity begun (other in-progress activities that started earlier are not counted as previous, but as overlapping)
+

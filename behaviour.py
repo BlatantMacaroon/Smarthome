@@ -23,11 +23,12 @@ def parse_time(line, side):
 
 class Behaviour:
     
-    def __init__(self, activity_name, sensors, start, finish):
+    def __init__(self, activity_name, sensors, start, finish, predecessor):
         self.activity_name = activity_name
         self.sensors = sensors
         self.start = start
         self.finish = finish
+        self.predecessor = predecessor
         start_index = times.index(self.start[0])
         finish_index = times.index(self.finish[0])
         inside_range = start_index > finish_index
@@ -41,7 +42,7 @@ class Behaviour:
                 self.time[t] = self.finish[1]
                 inside_range = False
     def membership(self, domain, element):
-        if domain == 'x': return (element[0] in self.sensors) * self.time[element[1]]
+        # if domain == 'x': return (element[0] in self.sensors) * self.time[element[1]]
         domain_set = getattr(self, domain)
         return (element in domain_set) * 1 if isinstance(domain_set, set) else domain_set[element]
 
