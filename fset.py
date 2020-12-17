@@ -1,36 +1,30 @@
 from collections import defaultdict
 from random import random
 import math
-from activity import Activity
+from activities import Activities
 from behaviour import Behaviour, parse_time, times
 
 def parse_data(data, test_proportion, test_novel=set()):
     #test_novel is a set of activity names to keep to one side to use as 'novel' activities
+    #may remove test_novel if I am just doing activity recognition rather than novelty detection.
     def add_sensor(buffer, line):
-        # verify behaviour is valid (related to motion or ) and then add sensor to all current behaviours
-        if line[2][0] == 'M' and line[3] == 'ON':
+        # verify sensor information is valid (related to motion detector or door) and then add sensor to all current behaviours in buffer
+        if line[2][0] == 'M' and line[3] == 'ON': # motion sensor present in Behaviour if there is at least one occurrence of that sensor being turned on
             for key in buffer: buffer[key]['sensors'].add(line[2])
-        if line[2][0] == 'D':
+        if line[2][0] == 'D': # door sensor is present in Behaviour if there is at least one occurrence of that door being opened or closed
             for key in buffer: buffer[key]['sensors'].add(line[2])
-    activities = defaultdict(Activity)
-    test = []
-    buffer = {}
-    universe = defaultdict(set)
-    max_lines = 150
-    max_behaviours = 20
-    predecessor = None
+    buffer = {} # data that will be used to build Behaviour objects once all lines relating to that object have been read (multiple different activities can be built in buffer at once)
+    behaviours = [] # Behaviour items that will be split into training and test data.
+    universe = defaultdict(set) # sets containing all elements in each domain
+    universe['time'] = times
+    predecessor = None # the first behaviour has no predecessor
     f = open(data)
     for line in f:
-        # whenever starting point is found, start adding lines to a new behaviour
-        # whenever end point is found, finish that behaviour, remove it from list of behaviours being added and 
+        # build a list of all behaviours and a universe of sensors
         line = line.split()
-        # if max_lines>0:
-        #     max_lines-=1
-        #     # print(line, parse_time(line, 'start'), parse_time(line, 'finish'))
-        # else: break
         if len(line) > 4: # if this row is a start/end of an activity, it will have two extra values at the end
             activity_name = line[4]
-            if activity_name == 'Novel': print('error! Activity cannot be defined as Novel')
+            if activity_name == 'Novel': print('error! Activity cannot be defined as Novel') #TODO remove this if no longer looking at novelty detection
             if line[5] == 'begin':
                 if activity_name in buffer:
                     print('error! Starting behaviour that is already started')
@@ -43,30 +37,22 @@ def parse_data(data, test_proportion, test_novel=set()):
                 else:
                     add_sensor(buffer, line)
                     buffer[activity_name]['finish'] = parse_time(line, 'finish')
-                    behaviour = Behaviour(**buffer[activity_name])
-                    if random() < test_proportion or activity_name in test_novel:
-                        test.append(behaviour)
-                    else: 
-                        # print('\n',activity_name)
-                        activities[activity_name].add(behaviour)
-                        if behaviour.predecessor is not None and behaviour.predecessor not in test_novel:
-                            activities[behaviour.predecessor].add_successor(activity_name)
-                        # print(max_behaviours)
-                        # if max_behaviours == 0: break
-                        # else: max_behaviours -=1
+                    behaviours.append(Behaviour(**buffer[activity_name])) # build a behaviour object using buffered data and add to list
                     universe['sensors'] = universe['sensors'].union(buffer[activity_name]['sensors'])
-                    # universe['x'] = universe['x'].union({(sensor, time) for sensor in buffer[activity_name]['sensors'] for time in times})
                     predecessor = activity_name
-                    universe['successor'].add(predecessor)
                     del buffer[activity_name]
         else: add_sensor(buffer, line)
-        universe['time'] = times
+    training_n = int(len(behaviours)*(1-test_proportion))
+    activities = Activities(behaviours[:training_n]) # train the activities model using the training data
+    test = behaviours[training_n:]
+    print(len(test))
+    print(training_n)
     return activities, test, universe
 
 def fuzzy_error(behaviour, activity, universe, domain):
     # this will calculate how well a given Activity fits a given behaviour by returning the standardized error
     # TODO: figure out whether this is the best way to go about it? Why combine per-element? Why not per-activity
-    return 1-math.sqrt(sum(((behaviour.membership(domain, element) - activity.membership(**{domain: element})))**2 for element in universe[domain])/len(universe[domain]))
+    return 1-math.sqrt(sum(((behaviour.membership(domain, element) - activity.membership(domain, element)))**2 for element in universe[domain])/len(universe[domain]))
 
 def best_activity(behaviour, activities, universe, domains, novelty_criterion, t):
     #returns a list of activity names, from best fitting to worst fitting
@@ -77,7 +63,7 @@ def best_activity(behaviour, activities, universe, domains, novelty_criterion, t
             domain = list(domains)[0]
             #if domain is 'predecessor' then look up fuzzy set for the predecessor (this could be boosted later on to make predecessor a fuzzy set rather than a string)
             if domain == 'predecessor':
-                return [(activities[behaviour.predecessor].membership(successor=act), act) for act in activities]
+                return [(activities[behaviour.predecessor].membership('successor', act), act) for act in activities]
             return [(fuzzy_error(behaviour, activities[act], universe, domain), act) for act in activities]
     return sorted(error_list(behaviour, activities, universe, domains, t)+([(novelty_criterion**len(domains), 'Novel')]), reverse=True)
 
@@ -178,24 +164,30 @@ def t_prod(a, b):
         return None
     return [(a[i][0]*b[i][0], a[i][1]) for i in range(len(a))]
 
-activities, test_data, universe= parse_data('data/data_aruba', 0.4, {'Sleeping'} )
-domains = {'predecessor'}
+activities, test_data, universe= parse_data('data/data_aruba', 0.4, {} )
+domains = {'sensors', 'time', 'predecessor'}
 criterion = 0
 t = t_prod
 args = (test_data, activities, universe, domains, criterion, t)
-# confusion_matrix(*args)
-# nth_guess_table(*args)
-# error_rates(*args)
-for act in activities:
-    print(act, len(activities[act].behaviours), activities[act].get_fuzzy_set('successor'), sum(activities[act].get_fuzzy_set('successor').values()))
 
-# print(test_data[0].activity_name, test_data[0].predecessor)
-# print(best_activity(test_data[0], activities, universe, domains, criterion, t))
+confusion_matrix(*args)
+nth_guess_table(*args)
+error_rates(*args)
+# for act in activities:
+#     print(act, len(activities[act].behaviours), activities[act].get_fuzzy_set('successor'), sum(activities[act].get_fuzzy_set('successor').values()))
+
+# print('\nbehaviour is:', test_data[0].activity_name, '; predecessor:', test_data[0].predecessor)
+# # print(activities[test_data[0].predecessor].get_fuzzy_set('successor'))
+# print('\nprediction based on predecessor')
+# print(best_activity(test_data[0], activities, universe, {'predecessor'}, criterion, t))
+# print('\nprediction based on sensors')
+# print(best_activity(test_data[0], activities, universe, {'sensors'}, criterion, t))
+# print('\nprediction based on time')
+# print(best_activity(test_data[0], activities, universe, {'sensors'}, criterion, t))
+# print('\nprediction based on all')
 # print(best_activity(test_data[0], activities, universe, domains, criterion, t))
 
-for i in test_data[:100]:
-    print(i.predecessor)
 
 #TODO predecessor domain
 #TODO cut old ways of doing t-norm
-#TODO need to change how data is split into blocks - need to have a contiguous block of data to calculate predecessor
+#TODO need to change how data is split into blocks - Hans suggested just splitting it into 2 blocks without randomization

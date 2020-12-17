@@ -1,5 +1,19 @@
 from collections import defaultdict
 
+class Activities:
+    def __init__(self, training_data):
+        self.data = defaultdict(Activity)
+        for behaviour in training_data:
+            self.data[behaviour.activity_name].add(behaviour)
+            if behaviour.predecessor is not None:
+                self.data[behaviour.predecessor].add_successor(behaviour.activity_name)
+    def __iter__(self):
+        return (x for x in self.data)
+    def __getitem__(self, val):
+        if val in self.data:
+            return self.data[val]
+        else: raise KeyError('no such key present in Activities object')
+
 class Activity:
     def __init__(self):
         self.behaviours = []
@@ -9,6 +23,7 @@ class Activity:
             'successor': defaultdict(int)
             # 'x': defaultdict(float)
         }
+        self.most_successors = 0
         # self.sensor_set = defaultdict(int)
         # self.time_set = defaultdict(float)
     def add(self, behaviour):
@@ -16,28 +31,22 @@ class Activity:
         for sensor in behaviour.sensors: self.sets['sensors'][sensor]+=1
         for key in behaviour.time:
             self.sets['time'][key] += behaviour.time[key]
-        # for sensor in behaviour.sensors:
-        #     for time in behaviour.time:
-        #         self.sets['x'][(sensor, time)] += behaviour.time[time]
-        #TODO I HAVE TO TALLY IN THE ACTIVITY FOR THE PREVIOUS ACTIVITY - NOT THIS ONE
     def add_successor(self, activity_name):
         self.sets['successor'][activity_name] +=1
+        self.most_successors = max(self.sets['successor'].values())
 
     def get_fuzzy_set(self, domain):
-        n = sum(self.sets['successor'].values()) if domain == 'successor' else len(self.behaviours)
-        print(n)
+        n = self.n_for_domain(domain)
         return {key: value/n for key, value in self.sets[domain].items()}
     def get_a_level(self, domain, alpha):
-        n = len(self.behaviours)
+        n = self.n_for_domain(domain)
         return {key: value/n for key, value in self.sets[domain].items() if value/n >= alpha}
-    def membership(self, **kwargs):
-        #TODO do not need to allow multiple domains as this isn't a very good measure (observation could equally match activity with low, high as high, low)
-        if len(kwargs) == 1:
-            domain, element = list(kwargs.items())[0]
-            n = sum(self.sets['successor'].values()) if domain == 'successor' else len(self.behaviours)
-            return self.sets[domain][element]/n if element in self.sets[domain] else 0.0
-        else:
-            return self.membership(**dict(list(kwargs.items())[:len(kwargs)//2])) * self.membership(**dict(list(kwargs.items())[len(kwargs)//2:]))
+    def membership(self, domain, element):
+        n = self.n_for_domain(domain)
+        return self.sets[domain][element]/n if element in self.sets[domain] else 0.0
+    def n_for_domain(self, domain):
+        return self.most_successors if domain == 'successor' else len(self.behaviours)
+
 
 
         # if isinstance(domain, set):
