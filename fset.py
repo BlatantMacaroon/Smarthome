@@ -1,12 +1,13 @@
 from collections import defaultdict
-from random import random
+from random import random, shuffle
 import math
 from activities import Activities
 from behaviour import Behaviour, parse_time, times
+import numpy as np
+import pylab as pl
 
-def parse_data(data, test_proportion, test_novel=set()):
-    #test_novel is a set of activity names to keep to one side to use as 'novel' activities
-    #may remove test_novel if I am just doing activity recognition rather than novelty detection.
+def parse_data(data, test_proportion):
+    #parses the data from a file, producing a trained Activities object, a set of test Behaviour objects, and a universe dict (with a set of elements for each domain)
     def add_sensor(buffer, line):
         # verify sensor information is valid (related to motion detector or door) and then add sensor to all current behaviours in buffer
         if line[2][0] == 'M' and line[3] == 'ON': # motion sensor present in Behaviour if there is at least one occurrence of that sensor being turned on
@@ -24,7 +25,7 @@ def parse_data(data, test_proportion, test_novel=set()):
         line = line.split()
         if len(line) > 4: # if this row is a start/end of an activity, it will have two extra values at the end
             activity_name = line[4]
-            if activity_name == 'Novel': print('error! Activity cannot be defined as Novel') #TODO remove this if no longer looking at novelty detection
+            if activity_name == 'Novel': print('error! Activity cannot be defined as Novel')
             if line[5] == 'begin':
                 if activity_name in buffer:
                     print('error! Starting behaviour that is already started')
@@ -42,6 +43,10 @@ def parse_data(data, test_proportion, test_novel=set()):
                     predecessor = activity_name
                     del buffer[activity_name]
         else: add_sensor(buffer, line)
+    #shuffle behaviours but keep first item at start as it has no predecessor (only suitable as a training item if successor domain is being used)
+    front = behaviours.pop(0)
+    shuffle(behaviours)
+    behaviours = [front] + behaviours
     training_n = int(len(behaviours)*(1-test_proportion))
     activities = Activities(behaviours[:training_n]) # train the activities model using the training data
     test = behaviours[training_n:]
@@ -51,7 +56,6 @@ def parse_data(data, test_proportion, test_novel=set()):
 
 def fuzzy_error(behaviour, activity, universe, domain):
     # this will calculate how well a given Activity fits a given behaviour by returning the standardized error
-    # TODO: figure out whether this is the best way to go about it? Why combine per-element? Why not per-activity
     return 1-math.sqrt(sum(((behaviour.membership(domain, element) - activity.membership(domain, element)))**2 for element in universe[domain])/len(universe[domain]))
 
 def best_activity(behaviour, activities, universe, domains, novelty_criterion, t):
@@ -66,6 +70,16 @@ def best_activity(behaviour, activities, universe, domains, novelty_criterion, t
                 return [(activities[behaviour.predecessor].membership('successor', act), act) for act in activities]
             return [(fuzzy_error(behaviour, activities[act], universe, domain), act) for act in activities]
     return sorted(error_list(behaviour, activities, universe, domains, t)+([(novelty_criterion**len(domains), 'Novel')]), reverse=True)
+
+def grade_vs_accuracy(test_data, activities, universe, domains, novelty_criterion, t):
+    result = []
+    # produce a box plot of membership grade of correct guess vs incorrect guesses
+    for behaviour in test_data:
+        guess = best_activity(behaviour, activities, universe, domains, novelty_criterion, t)[0]
+        result.append([behaviour.activity_name, guess[0], guess[1] == behaviour.activity_name])
+    result = np.array(result)
+    pl.boxplot([result[result[:,2] == 'True', 1].astype(np.float), result[result[:,2] == 'False', 1].astype(np.float)])
+    pl.show()
 
 class Crosstab:
     # provides a crosstabulation of best guesses: the frequency with which each activity in the test data was categorized as being each activity class
@@ -88,6 +102,7 @@ class Crosstab:
         for truth in self.xtab:
             self.truths[truth] = sum(self.xtab[truth].values())
         self.total = sum(self.truths.values())
+        print(sum(self.truths.values()), sum(self.predictions.values()), self.total)
     def f_string(self, truth, pred):
         s =  str(self.xtab[truth][pred])
         return (s if truth != pred else f"\u001b[32m{s}\u001b[37m")+' '*(4-len(s))
@@ -111,7 +126,6 @@ def confusion_matrix(test_data, activities, universe, domains, novelty_criterion
     print('n\t', *((str(result.predictions[act])+' '*(4-len(str(result.predictions[act]))) if act in result.predictions else '.   ') for act in act_names), result.total)
 
 
-#TODO: make work with new best_activity method (uses t norm)
 def idx_of_truth(behaviour, activities, universe, domains, novelty_criterion, t=None):
     #returns the index of the activity that was actually the corresponding ground truth (0 means first guess was correct, 1 means second guess, etc)
     #if activity is actually novel (ie not in the list of activities) will return the index of 'Novel'
@@ -119,6 +133,9 @@ def idx_of_truth(behaviour, activities, universe, domains, novelty_criterion, t=
     return  next((idx for idx, v in enumerate(best_activity(behaviour, activities, universe, domains, novelty_criterion, t)) if v[1] == target), None)
 
 def nth_guess_table(test_data, activities, universe, domains, novelty_criterion=0, t=None):
+    #prints for each activity class, a frequency distribution for the index in the best_activity list for behaviours
+    #eg for Wash_Dishes, [23, 34, 0, 1] would mean that across all the cases of Wash_Dishes, the algorithm ranked Wash_Dishes as the best option, 23 times,
+    #the second best option 34 times, and the fourth best option one time.
     result = defaultdict(list)
     for observation in test_data:
         truth = observation.activity_name
@@ -141,11 +158,16 @@ def hit_rate(crosstab, truth, activities):
     return crosstab.xtab[truth][target]/crosstab.truths[truth]
 
 def fa_rate(crosstab, target, activities):
-    #TODO: update to use totals to make calc faster
+    #returns the false alarm rate for a given target activity FA / (FA+CR)
     others = {a for a in crosstab.xtab if a in activities} if target == 'Novel' else {a for a in crosstab.xtab if a != target}
-    return sum(crosstab.xtab[a][target] for a in others)/sum(sum(crosstab.xtab[a].values()) for a in others)
+    return sum(crosstab.xtab[a][target] for a in others)/sum(crosstab.truths[a] for a in others)
+
+def overall_accuracy(crosstab, activities):
+    #returns (hits + CR) / (hits + misses + FA + CR) for all activities combined
+    return sum(crosstab.xtab[truth][truth if truth in activities else 'Novel'] for truth in crosstab.truths)/crosstab.total
 
 def error_rates(test_data, activities, universe, domains, novelty_criterion, t=None):
+    #prints out the hit and false alarm rates for each activity class
     result = Crosstab(test_data, activities, universe, domains, novelty_criterion, t)
     print ('\nHITS AND FALSE ALARMS')
     for truth in result.truths:
@@ -155,6 +177,7 @@ def error_rates(test_data, activities, universe, domains, novelty_criterion, t=N
             round(fa_rate(result, truth, activities), 3) if truth in activities else '.'
         )
     print('Novel'+' '*22, round(fa_rate(result, 'Novel', activities), 3))
+    print('Overall Accuracy:', round(overall_accuracy(result, activities), 3))
 
 def t_prod(a, b):
     # calculates combined membership for a list of (membership, element_name) tuples
@@ -164,30 +187,14 @@ def t_prod(a, b):
         return None
     return [(a[i][0]*b[i][0], a[i][1]) for i in range(len(a))]
 
-activities, test_data, universe= parse_data('data/data_aruba', 0.4, {} )
+
+
+activities, test_data, universe= parse_data('data/data_aruba', 0.5)
 domains = {'sensors', 'time', 'predecessor'}
-criterion = 0
+criterion = 0 #Note, novelty detection here is based upon a cutoff and is not documented in article. 0 = no behaviour is classed as Novel
 t = t_prod
 args = (test_data, activities, universe, domains, criterion, t)
 
 confusion_matrix(*args)
 nth_guess_table(*args)
 error_rates(*args)
-# for act in activities:
-#     print(act, len(activities[act].behaviours), activities[act].get_fuzzy_set('successor'), sum(activities[act].get_fuzzy_set('successor').values()))
-
-# print('\nbehaviour is:', test_data[0].activity_name, '; predecessor:', test_data[0].predecessor)
-# # print(activities[test_data[0].predecessor].get_fuzzy_set('successor'))
-# print('\nprediction based on predecessor')
-# print(best_activity(test_data[0], activities, universe, {'predecessor'}, criterion, t))
-# print('\nprediction based on sensors')
-# print(best_activity(test_data[0], activities, universe, {'sensors'}, criterion, t))
-# print('\nprediction based on time')
-# print(best_activity(test_data[0], activities, universe, {'sensors'}, criterion, t))
-# print('\nprediction based on all')
-# print(best_activity(test_data[0], activities, universe, domains, criterion, t))
-
-
-#TODO predecessor domain
-#TODO cut old ways of doing t-norm
-#TODO need to change how data is split into blocks - Hans suggested just splitting it into 2 blocks without randomization
